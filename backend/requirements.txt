@@ -1,7 +1,8 @@
-streamlit
+fastapi
+uvicorn
+websockets
 pandas
 numpy
-plotly
 scikit-learn
 sqlalchemy
 psycopg2-binary
