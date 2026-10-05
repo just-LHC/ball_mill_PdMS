@@ -1,3 +1,4 @@
+# backend/ml_engine.py
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -5,126 +6,71 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import numpy as np
 import pandas as pd
-import streamlit as st
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
 
-# Import central database logger functions
 try:
-    from db_engine import log_alert_to_db, init_alert_db_table
-    init_alert_db_table()
+    from db_engine import fetch_labeled_feedback, init_alert_db_table
+    from db_engine import DATABASE_URL
+    if DATABASE_URL:
+        init_alert_db_table()
 except Exception:
     pass
 
-# Retrieve Email Secrets safely
-SMTP_SERVER = st.secrets.get("SMTP_SERVER", os.getenv("SMTP_SERVER", "smtp.gmail.com"))
-SMTP_PORT = int(st.secrets.get("SMTP_PORT", os.getenv("SMTP_PORT", 465)))
-SENDER_EMAIL = st.secrets.get("SENDER_EMAIL", os.getenv("SENDER_EMAIL", ""))
-SENDER_PASSWORD = st.secrets.get("SENDER_PASSWORD", os.getenv("SENDER_PASSWORD", ""))
-MAINTENANCE_LEADS = st.secrets.get("MAINTENANCE_LEADS", os.getenv("MAINTENANCE_LEADS", ""))
+# Retrieve Email Secrets safely from environment
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
+MAINTENANCE_LEADS = os.getenv("MAINTENANCE_LEADS")
 
-# Model registry storing individual models: {(mill_name, equipment_name): IsolationForest}
 _MODEL_REGISTRY = {}
 _BUFFER_REGISTRY = {}
-
-def send_critical_alert_email(mill: str, equipment: str, vibration: float, temperature: float, individual_comments: list):
-    """Sends an automated HTML alert report to Maintenance Leads for CRITICAL ML predictions."""
-    sender_email = st.secrets.get("SENDER_EMAIL", os.getenv("SENDER_EMAIL", SENDER_EMAIL))
-    sender_password = st.secrets.get("SENDER_PASSWORD", os.getenv("SENDER_PASSWORD", SENDER_PASSWORD))
-    maintenance_leads = st.secrets.get("MAINTENANCE_LEADS", os.getenv("MAINTENANCE_LEADS", MAINTENANCE_LEADS))
-    smtp_server = st.secrets.get("SMTP_SERVER", os.getenv("SMTP_SERVER", SMTP_SERVER))
-    smtp_port = int(st.secrets.get("SMTP_PORT", os.getenv("SMTP_PORT", SMTP_PORT)))
-
-    if not sender_email or not sender_password or not maintenance_leads:
-        return
-
-    recipients = [email.strip() for email in maintenance_leads.split(",") if email.strip()]
-    if not recipients:
-        return
-
-    subject = f"🚨 [CRITICAL ML ALERT] {mill} - {equipment} Anomaly Detected"
-    comments_html = "".join([f"<li style='color: #D32F2F;'><b>{c}</b></li>" for c in individual_comments])
-    
-    html_content = f"""
-    <html>
-      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333;">
-        <div style="background-color: #D32F2F; padding: 15px; color: #ffffff; border-radius: 5px;">
-          <h2 style="margin:0;">🚨 LafargeHolcim Predictive Maintenance Alert</h2>
-          <p style="margin:5px 0 0 0; font-size: 14px;">Automated Anomaly Detection System — Côte d'Ivoire Plant Operations</p>
-        </div>
-        
-        <div style="padding: 20px; border: 1px solid #E0E0E0; border-radius: 5px; margin-top: 15px;">
-          <h3 style="color: #D32F2F; margin-top:0;">Critical Predictive Failure Warning</h3>
-          <p>The Machine Learning model has predicted an impending mechanical issue on <b>{mill}</b> requiring immediate inspection.</p>
-          
-          <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
-            <tr style="background-color: #F8F9FA;">
-              <td style="padding: 10px; border: 1px solid #DDD;"><b>Plant Unit:</b></td>
-              <td style="padding: 10px; border: 1px solid #DDD;">{mill}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #DDD;"><b>Equipment Subsystem:</b></td>
-              <td style="padding: 10px; border: 1px solid #DDD;">{equipment}</td>
-            </tr>
-            <tr style="background-color: #F8F9FA;">
-              <td style="padding: 10px; border: 1px solid #DDD;"><b>Vibration RMS:</b></td>
-              <td style="padding: 10px; border: 1px solid #DDD; color: #D32F2F;"><b>{vibration} mm/s</b></td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #DDD;"><b>Bearing Temperature:</b></td>
-              <td style="padding: 10px; border: 1px solid #DDD;"><b>{temperature} °C</b></td>
-            </tr>
-            <tr style="background-color: #F8F9FA;">
-              <td style="padding: 10px; border: 1px solid #DDD;"><b>Detection Time:</b></td>
-              <td style="padding: 10px; border: 1px solid #DDD;">{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</td>
-            </tr>
-          </table>
-
-          <h4>📋 Diagnostic Findings & Recommended Actions:</h4>
-          <ul>
-            {comments_html}
-          </ul>
-
-          <div style="margin-top: 25px; padding: 12px; background-color: #FFF3CD; border-left: 5px solid #FFC107;">
-            <b>Action Required:</b> Please log into the PdM Dashboard Servicing Desk to review full telemetry trends and log maintenance intervention notes.
-          </div>
-        </div>
-        
-        <p style="font-size: 11px; color: #888888; margin-top: 20px;">
-          This is an automated notification generated by LafargeHolcim Côte d'Ivoire PdM Suite. Do not reply to this email.
-        </p>
-      </body>
-    </html>
-    """
-
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = sender_email
-        msg["To"] = ", ".join(recipients)
-        msg.attach(MIMEText(html_content, "html"))
-
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=15) as server:
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, recipients, msg.as_string())
-        else:
-            with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as server:
-                server.starttls()
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, recipients, msg.as_string())
-    except Exception as e:
-        print(f"[ALERT ENGINE ERROR] Failed to send critical email notification: {e}")
+_FEEDBACK_MODEL_REGISTRY = {}
 
 def _get_model_key(mill: str, equipment: str) -> tuple:
     return (mill.strip(), equipment.strip())
 
+def retrain_equipment_model(mill: str, equipment: str):
+    try:
+        feedback_rows = fetch_labeled_feedback(mill, equipment)
+    except Exception as exc:
+        print(f"[MODEL FEEDBACK ERROR] {exc}")
+        return {"trained": False, "samples": 0, "message": "Could not load servicing feedback."}
+
+    features = []
+    labels = []
+    for row in feedback_rows:
+        if row["outcome"] == "GENUINE_ISSUE":
+            labels.append(1)
+        elif row["outcome"] == "FALSE_ALARM":
+            labels.append(0)
+        else:
+            continue
+        features.append([row["vibration_snapshot"], row["temperature_snapshot"]])
+
+    class_counts = {"GENUINE_ISSUE": labels.count(1), "FALSE_ALARM": labels.count(0)}
+    if min(class_counts.values()) < 2:
+        return {
+            "trained": False,
+            "samples": len(labels),
+            "class_counts": class_counts,
+            "message": "Collect at least two examples of each servicing outcome before updating this equipment model.",
+        }
+
+    model = RandomForestClassifier(n_estimators=100, class_weight="balanced", random_state=42)
+    model.fit(features, labels)
+    _FEEDBACK_MODEL_REGISTRY[_get_model_key(mill, equipment)] = model
+    return {
+        "trained": True,
+        "samples": len(labels),
+        "class_counts": class_counts,
+        "message": "Model retrained with servicing feedback.",
+    }
+
 def init_equipment_model(mill: str, equipment: str):
-    """Initializes and pre-trains an isolated ML model for a specific equipment unit."""
     key = _get_model_key(mill, equipment)
-    
     if key not in _MODEL_REGISTRY:
         model = IsolationForest(contamination=0.05, random_state=42)
-        
         vib_base = 4.0 if equipment == "Mill Main Control" else 2.5
         temp_base = 62.0 if equipment == "E5 & E8 Cement Pumps" else 55.0
         
@@ -139,12 +85,9 @@ def init_equipment_model(mill: str, equipment: str):
         
         _MODEL_REGISTRY[key] = model
         _BUFFER_REGISTRY[key] = buffer_df
+        retrain_equipment_model(mill, equipment)
 
 def analyze_telemetry_diagnostics(mill: str, equipment: str, vib: float, temp: float):
-    """
-    Evaluates telemetry against the SPECIFIC machine's dedicated ML model 
-    and parameter threshold limits. Automatically logs critical alerts to PostgreSQL.
-    """
     key = _get_model_key(mill, equipment)
     if key not in _MODEL_REGISTRY:
         init_equipment_model(mill, equipment)
@@ -153,97 +96,43 @@ def analyze_telemetry_diagnostics(mill: str, equipment: str, vib: float, temp: f
     comments = []
     severity = "NORMAL"
     
-    # Threshold Checks
     if vib > 7.0:
-        comments.append(f"🔴 VIBRATION HIGH ({vib} mm/s): ISO Zone D breach on {mill} - {equipment}. Check shaft alignment & foundation bolts.")
+        comments.append("Demo rule flagged high vibration; its boundary is not an engineering-verified plant limit.")
         severity = "CRITICAL"
     elif vib > 4.5:
-        comments.append(f"⚠️ VIBRATION RISING ({vib} mm/s): ISO Zone C warning. Monitor bearing race wear.")
+        comments.append("Demo rule flagged elevated vibration; its boundary is not an engineering-verified plant limit.")
         if severity != "CRITICAL": severity = "WARNING"
-    elif vib < 0.5:
-        comments.append(f"⚡ VIBRATION TOO LOW ({vib} mm/s): Low signal. Check sensor wiring or uncoupled shaft.")
-        if severity != "CRITICAL": severity = "WARNING"
-    else:
-        comments.append(f"🟢 Vibration Normal ({vib} mm/s).")
 
     if temp > 90.0:
-        comments.append(f"🔴 TEMPERATURE HIGH ({temp} °C): Overheating detected. Inspect lubrication flow immediately.")
+        comments.append("Demo rule flagged high temperature; its boundary is not an engineering-verified plant limit.")
         severity = "CRITICAL"
     elif temp > 75.0:
-        comments.append(f"⚠️ TEMPERATURE RISING ({temp} °C): Running warm. Check grease levels & cooling fan.")
+        comments.append("Demo rule flagged elevated temperature; its boundary is not an engineering-verified plant limit.")
         if severity != "CRITICAL": severity = "WARNING"
-    elif temp < 15.0:
-        comments.append(f"⚡ TEMPERATURE TOO LOW ({temp} °C): Check RTD element seating.")
-        if severity != "CRITICAL": severity = "WARNING"
-    else:
-        comments.append(f"🟢 Temperature Normal ({temp} °C).")
 
-    # Isolated ML Prediction
     features = pd.DataFrame([[vib, temp]], columns=["vibration_mm_s", "temperature_c"])
-    prediction = model.predict(features)
-    score = model.decision_function(features)
-    
-    is_ml_anomaly = True if prediction[0] == -1 else False
-    anomaly_probability = round(float(max(0, (0.2 - score[0]) * 100)), 1)
-    
-    if is_ml_anomaly:
-        if temp > 65.0 and vib > 3.5:
-            ml_comment = f"🔍 SPECIFIC ANOMALY on {mill} {equipment} ({anomaly_probability}% Risk): Concurrent heat & vibration rise. Suggested Action: Inspect bearing coupling."
-        elif temp > 65.0 and vib <= 3.5:
-            ml_comment = f"🔍 THERMAL PATTERN ({anomaly_probability}% Risk): High heat without matching vibration. Suggested Action: Check cooling fan airflow or grease level."
-        elif vib > 3.5 and temp <= 65.0:
-            ml_comment = f"🔍 MECHANICAL LOOSENESS ({anomaly_probability}% Risk): Elevated vibration without heat generation. Suggested Action: Check structural mounting bolts."
-        else:
-            ml_comment = f"🔍 ABNORMAL OPERATION PATTERN ({anomaly_probability}% Risk): Reading deviates from {mill} {equipment}'s baseline."
-            
-        comments.append(ml_comment)
-        if severity == "NORMAL": severity = "WARNING"
-
-    # Persistent PostgreSQL Alert Logging & Email Notification Trigger
-    if severity == "CRITICAL":
-        try:
-            log_alert_to_db(
-                mill=mill,
-                equipment=equipment,
-                severity=severity,
-                issue=f"ML Anomaly ({anomaly_probability}% Risk): Concurrent heat & vibration rise",
-                vib=vib,
-                temp=temp
-            )
-        except Exception as err:
-            print(f"[DB LOGGING ERROR] Could not persist alert to PostgreSQL: {err}")
-
-        send_critical_alert_email(
-            mill=mill,
-            equipment=equipment,
-            vibration=vib,
-            temperature=temp,
-            individual_comments=comments
-        )
+    feedback_model = _FEEDBACK_MODEL_REGISTRY.get(key)
+    if feedback_model is not None:
+        prediction = feedback_model.predict(features)
+        probabilities = feedback_model.predict_proba(features)[0]
+        failure_index = list(feedback_model.classes_).index(1)
+        is_ml_anomaly = bool(prediction[0] == 1)
+        anomaly_score = float(probabilities[failure_index])
+        score_label = "Uncalibrated feedback-model class score"
+    else:
+        prediction = model.predict(features)
+        decision_score = model.decision_function(features)
+        is_ml_anomaly = bool(prediction[0] == -1)
+        anomaly_score = -float(decision_score[0])
+        score_label = "Uncalibrated Isolation Forest decision score"
 
     return {
         "severity": severity,
         "is_anomaly": is_ml_anomaly,
-        "anomaly_prob": anomaly_probability,
-        "diagnostic_comments": " | ".join(comments),
-        "individual_comments": comments
+        "anomaly_prob": None,
+        "anomaly_score": round(anomaly_score, 4),
+        "score_label": score_label,
+        "score_calibrated": False,
+        "severity_source": "Unverified demo rules; not plant alarm configuration",
+        "diagnostic_comments": " | ".join(comments) if comments else "Demo data only; no verified plant limits configured.",
     }
-
-def retrain_specific_equipment_model(mill: str, equipment: str, feedback_samples: list, was_true_failure: bool = True):
-    key = _get_model_key(mill, equipment)
-    if key not in _MODEL_REGISTRY:
-        init_equipment_model(mill, equipment)
-        
-    model = _MODEL_REGISTRY[key]
-    buffer_df = _BUFFER_REGISTRY[key]
-    
-    new_rows = pd.DataFrame(feedback_samples, columns=["vibration_mm_s", "temperature_c"])
-    
-    if was_true_failure:
-        updated_buffer = pd.concat([buffer_df, new_rows, new_rows], ignore_index=True)
-    else:
-        updated_buffer = pd.concat([buffer_df, new_rows], ignore_index=True)
-        
-    model.fit(updated_buffer)
-    _MODEL_REGISTRY[key] = model
-    _BUFFER_REGISTRY[key] = updated_buffer
