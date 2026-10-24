@@ -1,0 +1,143 @@
+import os
+import ssl
+import json
+import requests
+import urllib3
+from typing import Dict, Any, List
+
+# Global SSL bypass for test/demo environments
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ['PYTHONHTTPSVERIFY'] = '0'
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+class ISenseV3Pipeline:
+    # Feature ID Mapping
+    FEATURE_MAP = {
+        "1": "Velocity (mm/s)",
+        "2": "Acceleration (g)",
+        "4": "VCC_G (g)",
+        "14": "K Factor",
+        "15": "Temperature (°C)",
+        "18": "Level (m)",
+        "31": "FC",
+        "32": "VC_G (g)",
+        "46": "Battery (%)",
+        "69": "RPM",
+        "88": "Distance (mm)"
+    }
+
+    # Signal Type Mapping
+    SIGNAL_TYPES = {
+        1: "Velocity Spectrum",
+        2: "Acceleration Spectrum",
+        4: "Wave Spectrum",
+        6: "Envelope Spectrum"
+    }
+
+    def __init__(self, email: str, password: str, base_url: str = "https://v3back-demo.i-sense.io/api/i-sense-v3"):
+        self.base_url = base_url.rstrip("/")
+        self.email = email
+        self.password = password
+        self.token = None
+        self.session = requests.Session()
+        self.session.verify = False
+
+    def login(self) -> str:
+        """Authenticates via POST /auth/login and stores JWT token."""
+        url = f"{self.base_url}/auth/login"
+        payload = {"email": self.email, "password": self.password}
+        headers = {"Content-Type": "application/json"}
+
+        response = self.session.post(url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        self.token = (
+            data.get("token") 
+            or data.get("access_token") 
+            or data.get("accessToken")
+            or (data.get("data", {}).get("token") if isinstance(data.get("data"), dict) else None)
+        )
+        print("✔ Successfully authenticated with I-SENSE v3 API.")
+        return self.token
+
+    def _headers(self) -> Dict[str, str]:
+        """Fixed: added 'self' parameter."""
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+
+    def get_nv_measurements(self, asset_id: int, start_date: str, end_date: str) -> Dict[str, Any]:
+        url = f"{self.base_url}/tenant/assets/{int(asset_id)}/nvmeasurements"
+        params = {"startDate": start_date, "endDate": end_date}
+
+        response = self.session.get(url, headers=self._headers(), params=params, timeout=15)
+        response.raise_for_status()
+        return response.json()
+
+    def parse_nv_measurements(self, raw_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        records = []
+        data_block = raw_response.get("data", {})
+
+        for timestamp, sensor_points in data_block.items():
+            for point_name, features in sensor_points.items():
+                record = {
+                    "timestamp": timestamp,
+                    "sensor_point": point_name
+                }
+                for fid, val in features.items():
+                    feature_name = self.FEATURE_MAP.get(str(fid), f"Feature_{fid}")
+                    record[feature_name] = val
+                    
+                records.append(record)
+                
+        return records
+
+    def get_signal_spectrum(self, asset_id: int, measure_id: int, signal_type: int) -> Dict[str, Any]:
+        if signal_type not in self.SIGNAL_TYPES:
+            raise ValueError(f"Invalid signalType {signal_type}. Must be one of {list(self.SIGNAL_TYPES.keys())}")
+
+        url = f"{self.base_url}/tenant/signals/{int(asset_id)}/{int(measure_id)}/{int(signal_type)}"
+        print(f"Fetching {self.SIGNAL_TYPES[signal_type]} for Measure ID: {measure_id}...")
+
+        response = self.session.get(url, headers=self._headers(), timeout=15)
+        response.raise_for_status()
+        return response.json()
+
+
+# ==============================================================================
+# EXECUTION
+# ==============================================================================
+if __name__ == "__main__":
+    EMAIL = "justice.wiruu.ext@holcim.com"      # Replace with your email
+    PASSWORD = "wj0fgjx6"      # Replace with your password
+    
+    # Must use the numerical internal Asset ID (e.g., 42 instead of '556-EP1')
+    INTERNAL_ASSET_ID = 42
+    
+    START_DATE = "2026-09-01"
+    END_DATE = "2026-10-08"
+
+    api = ISenseV3Pipeline(email=EMAIL, password=PASSWORD)
+
+    try:
+        # 1. Login
+        api.login()
+
+        # 2. Fetch NV Data
+        raw_nv = api.get_nv_measurements(
+            asset_id=INTERNAL_ASSET_ID, 
+            start_date=START_DATE, 
+            end_date=END_DATE
+        )
+
+        # 3. Parse NV Data for Model Ingestion
+        clean_dataset = api.parse_nv_measurements(raw_nv)
+        print("\n--- Parsed Measurement Sample (Ready for ML) ---")
+        print(json.dumps(clean_dataset[:2], indent=2))
+
+    except requests.exceptions.HTTPError as err:
+        print(f"\n[HTTP Error {err.response.status_code}]: {err.response.text}")
+    except Exception as e:
+        print(f"\n[Error]: {e}")

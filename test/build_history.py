@@ -1,0 +1,110 @@
+import os
+import ssl
+import json
+import requests
+import urllib3
+import pandas as pd
+
+# Global SSL bypass for test environment
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ['PYTHONHTTPSVERIFY'] = '0'
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+EMAIL = "justice.wiruu.ext@holcim.com"      # Replace with your email
+PASSWORD = "wj0fgjx6"      # Replace with your password
+BASE_URL = "https://v3back-demo.i-sense.io/api/i-sense-v3"
+ASSET_ID = 92
+
+# The exact mapping provided by your system
+FEATURE_MAPPING = {
+    1: "Velocity (mm/s)",
+    2: "Acceleration (g)",
+    4: "VCC_G (g)",
+    14: "K Factor",
+    15: "Temperature (°C)",
+    18: "Level (m)",
+    31: "FC",
+    32: "VC_G (g)"
+}
+
+session = requests.Session()
+session.verify = False
+
+try:
+    # 1. Login
+    print("[1/3] Authenticating with I-SENSE API...")
+    res = session.post(f"{BASE_URL}/auth/login", json={"email": EMAIL, "password": PASSWORD})
+    res.raise_for_status()
+    token = res.json().get("token") or res.json()["data"]["token"]
+    session.headers.update({"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+
+    # 2. Fetch Graph Data for Each Feature
+    print("\n[2/3] Extracting Historical Trends for all targeted features...")
+    all_data_points = []
+    
+    payload = {
+        "assetsIds": ["93", "94", "95"],
+        "selectedPointId": "",
+        "startDate": "",
+        "endDate": ""
+    }
+
+    def extract_trend_points(node, feature_id):
+        if isinstance(node, dict):
+            if "created_at" in node and "measure_id" in node and "value" in node:
+                all_data_points.append({
+                    "timestamp": node["created_at"],
+                    "measure_id": node["measure_id"],
+                    "feature": FEATURE_MAPPING[feature_id],
+                    "value": node["value"]
+                })
+            for v in node.values():
+                extract_trend_points(v, feature_id)
+        elif isinstance(node, list):
+            for item in node:
+                extract_trend_points(item, feature_id)
+
+    # Loop through the exact feature IDs from your mapping
+    for fid in FEATURE_MAPPING.keys():
+        url = f"{BASE_URL}/tenant/assets/trend/{ASSET_ID}/{fid}"
+        response = session.post(url, json=payload, timeout=15)
+        
+        if response.status_code == 200:
+            extract_trend_points(response.json(), fid)
+            print(f"   -> {FEATURE_MAPPING[fid]}: Extracted successfully.")
+        else:
+            print(f"   -> {FEATURE_MAPPING[fid]}: No data or request failed.")
+
+    df_raw = pd.DataFrame(all_data_points)
+    
+    if df_raw.empty:
+        raise ValueError("No data could be extracted. The API returned empty results.")
+        
+    print(f"\n   Total raw data points extracted: {len(df_raw)}")
+
+    # 3. Pivot and Assemble Final Dataset
+    print("\n[3/3] Assembling Final Machine Learning Dataset...")
+    
+    df_final = df_raw.pivot_table(
+        index=["timestamp", "measure_id"], 
+        columns="feature", 
+        values="value", 
+        aggfunc="mean"
+    ).reset_index()
+    
+    # Sort chronologically
+    df_final["timestamp"] = pd.to_datetime(df_final["timestamp"])
+    df_final = df_final.sort_values(by=["timestamp", "measure_id"])
+    
+    # Export to CSV
+    output_name = "ball_mill_ml_dataset.csv"
+    df_final.to_csv(output_name, index=False)
+    
+    print("\n================ DATASET GENERATED ================")
+    print(f"✔ Saved fully structured history to '{output_name}'")
+    print(f"Total ML-ready Rows: {len(df_final)}")
+    print("\nData Preview:")
+    print(df_final.head(5).to_string())
+
+except Exception as e:
+    print(f"\n[Error]: {e}")
