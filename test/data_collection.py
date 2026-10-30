@@ -21,7 +21,7 @@ ASSET_IDS = [92]
 
 # Date range in 'YYYY-MM-DD HH:mm:ss' format required by NV endpoint[cite: 3, 15]
 START_DATE = "2022-04-00 00:00:00"
-END_DATE = "2026-10-24 00:00:00"
+END_DATE = "2026-10-29 00:00:00"
 
 # Output folder for individual sensor CSV files
 INDIVIDUAL_SENSOR_DIR = "sensor_datasets_BM5"
