@@ -10,8 +10,8 @@ ssl._create_default_https_context = ssl._create_unverified_context
 os.environ['PYTHONHTTPSVERIFY'] = '0'
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-EMAIL = "justice.wiruu.ext@holcim.com"      # Replace with your email
-PASSWORD = "wj0fgjx6"      # Replace with your password
+EMAIL = "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"      # Replace with your email
+PASSWORD = "XXXXXX"      # Replace with your password
 BASE_URL = "https://v3back-demo.i-sense.io/api/i-sense-v3"
 ASSET_ID = 92
 
