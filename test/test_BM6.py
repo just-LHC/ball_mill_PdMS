@@ -18,7 +18,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAhCAZeVk/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=utVU99kndt6AZj8ytN8QmRwe2tbO8xLD7f5IrLQFV0s"
 
 # Platform API Credentials
-EMAIL = "justice.wiruu.ext@holcim.com"
+EMAIL = "jXXXXXXXXXXXXXXXXXXXX"
 PASSWORD = "wj0fgjx6"
 BASE_URL = "https://v3back-demo.i-sense.io/api/i-sense-v3"
 ASSET_IDS = []
