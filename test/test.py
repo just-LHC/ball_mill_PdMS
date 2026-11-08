@@ -19,8 +19,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 1. CONFIGURATION & CREDENTIALS
 # ==============================================================================
 # Platform Credentials
-EMAIL = "justice.wiruu.ext@holcim.com"
-PASSWORD = "wj0fgjx6"
+EMAIL = "jXXXXXXXXXXXXXXXXXXXXXXX"
+PASSWORD = "XXXXXXXXXXXXXXXXXXXXXXXXXX"
 BASE_URL = "https://v3back-demo.i-sense.io/api/i-sense-v3"
 ASSET_IDS = [87]
 ASSET_NAME = "Harnais de Commande Broyeur (Ref. 566-EP1)"
